@@ -139,7 +139,7 @@ async def get_or_create_workflow(workflow_id):
         # If workflow doesn't exist or isn't running, start a new one
         try:
             handle = await client.start_workflow(
-                "PPTAgentWorkflow.run",
+                "PPTAgentWorkflow",
                 id=workflow_id,
                 task_queue="ppt-agent-task-queue"
             )
