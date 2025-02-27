@@ -10,9 +10,10 @@ import json
 # Set page config first
 st.set_page_config(layout="wide", page_title="PowerPoint & Excel Assistant")
 
-# Basic styling
+# Enhanced styling with GitHub workspace inspiration
 st.markdown("""
 <style>
+/* Thread styling */
 .thread-item {
     background-color: #f0f2f6;
     border-radius: 5px;
@@ -22,6 +23,52 @@ st.markdown("""
 .thread-item.active {
     background-color: #e0e5ea;
     border-left: 5px solid #4e8cff;
+}
+
+/* GitHub-inspired styling */
+.tool-call {
+    background-color: #f6f8fa;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+.tool-call-header {
+    background-color: #f1f8ff;
+    border-bottom: 1px solid #e1e4e8;
+    padding: 8px 16px;
+    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+}
+.tool-call-body {
+    padding: 16px;
+}
+.tool-response {
+    background-color: #f8f9fa;
+    border-top: 1px solid #e1e4e8;
+    padding: 8px 16px;
+}
+
+/* Tool name and response styling */
+.tool-name {
+    color: #e9b914;
+    font-weight: bold;
+    font-family: monospace;
+    background-color: #fffbe6;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+.tool-response-header {
+    color: #28a745;
+    font-weight: bold;
+    background-color: #e6ffed;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-top: 10px;
+}
+
+/* File selection styling */
+.file-section {
+    margin-top: 20px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -135,7 +182,16 @@ async def send_user_input(workflow_id, query, pptx_files, excel_files):
         return False
 
 def poll_for_assistant_response(workflow_id, message_count):
-    """Poll until an assistant message is received"""
+    """
+    Poll until an assistant message with non-empty content is received
+    
+    Args:
+        workflow_id: ID of the workflow to query
+        message_count: Count of assistant messages before sending user message
+    
+    Returns:
+        True when a complete assistant response is detected
+    """
     progress_bar = st.progress(0)
     message_placeholder = st.empty()
     message_placeholder.info("Waiting for assistant response...")
@@ -150,11 +206,12 @@ def poll_for_assistant_response(workflow_id, message_count):
         # Get current conversation history
         history = asyncio.run(get_conversation_history(workflow_id))
         
-        # Find the most recent assistant message (ignoring tool messages)
+        # Find all assistant messages
         assistant_messages = [msg for msg in history if msg.get("role") == "assistant"]
         
-        # If we have more assistant messages than before
-        if len(assistant_messages) > message_count:
+        # Check if we have a new assistant message AND it has non-empty content
+        if (len(assistant_messages) > message_count and 
+            assistant_messages[-1].get("content", "") != ""):
             progress_bar.empty()
             message_placeholder.empty()
             return True
@@ -179,6 +236,76 @@ def list_files(directory, extensions):
 def count_assistant_messages(conversation):
     """Count how many messages from the assistant are in the conversation"""
     return len([msg for msg in conversation if msg.get("role") == "assistant"])
+
+def display_conversation(conversation):
+    """
+    Display conversation with tool calls in a GitHub workspace-inspired UI
+    with yellow tool names and green responses
+    
+    Args:
+        conversation: List of message objects from the conversation history
+    """
+    # Skip the system message
+    for i, message in enumerate(conversation[1:] if len(conversation) > 0 else []):
+        role = message.get("role", "")
+        content = message.get("content", "")
+        
+        # Handle user messages
+        if role == "user":
+            with st.chat_message(role):
+                st.write(content)
+                
+        # Handle assistant messages with special handling for tool calls
+        elif role == "assistant":
+            with st.chat_message(role):
+                # Display the text content
+                if content:
+                    st.write(content)
+                
+                # Check if there are tool calls
+                tool_calls = message.get("tool_calls", [])
+                if tool_calls:
+                    # Create an expander for tool calls
+                    with st.expander("Tool Calls", expanded=True):
+                        # Display each tool call
+                        for tool_call in tool_calls:
+                            tool_id = tool_call.get("id", "")
+                            tool_name = tool_call["function"]["name"]
+                            tool_args = tool_call["function"]["arguments"]
+                            
+                            # Format JSON args for better display
+                            try:
+                                args_dict = json.loads(tool_args)
+                                formatted_args = json.dumps(args_dict, indent=2)
+                            except:
+                                formatted_args = tool_args
+                            
+                            # Show the tool name in yellow
+                            st.markdown(f'<div class="tool-name">📦 {tool_name}</div>', unsafe_allow_html=True)
+                            
+                            # Show the arguments in a code block
+                            st.code(formatted_args, language="json")
+                            
+                            # Find corresponding tool response if available
+                            for next_msg in conversation[i+2:]:  # +2 to account for system message and current index
+                                if next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == tool_id:
+                                    tool_response = next_msg.get("content", "")
+                                    
+                                    # Display the response header in green
+                                    st.markdown('<div class="tool-response-header">✅ Response</div>', unsafe_allow_html=True)
+                                    
+                                    # Determine how to display the response content
+                                    if tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
+                                        st.code(tool_response, language="xml")
+                                    elif "```" in tool_response or tool_response.startswith("|"):
+                                        # This is likely markdown or a table
+                                        st.markdown(tool_response)
+                                    else:
+                                        st.write(tool_response)
+                                    break
+                            
+                            # Add some space between tool calls
+                            st.markdown("<hr style='margin: 15px 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
 def main():
     # Initialize session state
@@ -282,19 +409,12 @@ def main():
         # Get conversation history
         conversation = asyncio.run(get_conversation_history(workflow_id))
         
-        # Display chat messages
+        # Display chat messages with tool calls
         st.subheader("Conversation")
         
         if conversation:
-            # Skip the system message
-            for message in conversation[1:]:
-                role = message.get("role", "")
-                content = message.get("content", "")
-                
-                # Only show user and assistant messages
-                if role in ["user", "assistant"]:
-                    with st.chat_message(role):
-                        st.write(content)
+            # Use our new function to display the conversation
+            display_conversation(conversation)
         else:
             st.info("Send a message to start the conversation.")
         
