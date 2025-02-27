@@ -1,0 +1,5 @@
+temporalio
+python-pptx
+openai
+openpyxl
+pandas
