@@ -139,7 +139,7 @@ async def get_or_create_workflow(workflow_id):
         # If workflow doesn't exist or isn't running, start a new one
         try:
             handle = await client.start_workflow(
-                "PPTAgentWorkflow",
+                "PPTAgentWorkflow.run",
                 id=workflow_id,
                 task_queue="ppt-agent-task-queue"
             )
@@ -183,7 +183,8 @@ async def send_user_input(workflow_id, query, pptx_files, excel_files):
 
 def poll_for_assistant_response(workflow_id, message_count):
     """
-    Poll until an assistant message with non-empty content is received
+    Poll until an assistant message with non-empty content is received,
+    showing tool calls in real-time as they happen
     
     Args:
         workflow_id: ID of the workflow to query
@@ -196,8 +197,14 @@ def poll_for_assistant_response(workflow_id, message_count):
     message_placeholder = st.empty()
     message_placeholder.info("Waiting for assistant response...")
     
+    # Create a container for displaying real-time updates
+    update_container = st.container()
+    
     max_attempts = 60
     delay = 1
+    
+    # Track which tool calls we've already seen
+    seen_tool_call_ids = set()
     
     for i in range(max_attempts):
         # Update progress bar
@@ -209,7 +216,59 @@ def poll_for_assistant_response(workflow_id, message_count):
         # Find all assistant messages
         assistant_messages = [msg for msg in history if msg.get("role") == "assistant"]
         
-        # Check if we have a new assistant message AND it has non-empty content
+        # Check if we have new tool calls to display
+        if assistant_messages and len(assistant_messages) >= message_count:
+            latest_assistant = assistant_messages[-1]
+            tool_calls = latest_assistant.get("tool_calls", [])
+            
+            # Display any new tool calls
+            if tool_calls:
+                with update_container:
+                    for tool_call in tool_calls:
+                        tool_id = tool_call.get("id", "")
+                        
+                        # Only show tool calls we haven't seen before
+                        if tool_id not in seen_tool_call_ids:
+                            seen_tool_call_ids.add(tool_id)
+                            
+                            tool_name = tool_call["function"]["name"]
+                            tool_args = tool_call["function"]["arguments"]
+                            
+                            # Show the tool name in yellow
+                            st.markdown(f'<div class="tool-name">📦 {tool_name}</div>', unsafe_allow_html=True)
+                            
+                            # Try to format args as JSON
+                            try:
+                                args_dict = json.loads(tool_args)
+                                formatted_args = json.dumps(args_dict, indent=2)
+                            except:
+                                formatted_args = tool_args
+                                
+                            with st.expander("Arguments", expanded=False):
+                                st.code(formatted_args, language="json")
+            
+            # Find new tool responses
+            for i, msg in enumerate(history):
+                if msg.get("role") == "tool":
+                    tool_call_id = msg.get("tool_call_id", "")
+                    
+                    # Check if this is a response to a tool call we've seen but haven't seen the response yet
+                    if tool_call_id in seen_tool_call_ids and f"response_{tool_call_id}" not in seen_tool_call_ids:
+                        seen_tool_call_ids.add(f"response_{tool_call_id}")
+                        
+                        # Get the tool name from the matching tool call
+                        tool_name = "Unknown Tool"
+                        for message in history:
+                            if message.get("role") == "assistant" and message.get("tool_calls"):
+                                for tc in message.get("tool_calls", []):
+                                    if tc.get("id") == tool_call_id:
+                                        tool_name = tc["function"]["name"]
+                                        break
+                        
+                        with update_container:
+                            st.markdown(f'<div class="tool-response-header">✅ Response from: {tool_name}</div>', unsafe_allow_html=True)
+        
+        # Check if we have a complete assistant response (non-empty content)
         if (len(assistant_messages) > message_count and 
             assistant_messages[-1].get("content", "") != ""):
             progress_bar.empty()
