@@ -408,10 +408,10 @@ File paths mapping:
 {file_mapping_str}
 
 You have access to the following tools:
-1. get_slide - Get the XML representation of a slide
-2. get_excel_data - Get data from an Excel sheet as a markdown table
-3. modify_slide - Modify a slide using Python code
-4. modify_excel - Modify an Excel sheet using Python code
+1. get_slide - Get the XML representation of a slide. Use this tool to examine slide structure/content before proceeding with any slide modifications.
+2. get_excel_data - Get data from an Excel sheet as a markdown table. Use this tool to analyze data structure before proceeding with any excel modifications.
+3. modify_slide - Use this tool to modify any Slide using Python code.
+4. modify_excel - Use this tool to modify any Excel sheet using Python code.
 
 When modifying slides, you have access to a 'slide' object from the python-pptx library.
 When modifying Excel, you have access to a 'df' DataFrame object from pandas.
