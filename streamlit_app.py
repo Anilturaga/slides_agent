@@ -292,6 +292,18 @@ def list_files(directory, extensions):
                 files.append(os.path.join(directory, file))
     return files
 
+def save_uploaded_file(uploaded_file, directory):
+    """Save an uploaded file to the specified directory and return the full path"""
+    # Create directory if it doesn't exist
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    # Save the file
+    file_path = os.path.join(directory, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
+
 def count_assistant_messages(conversation):
     """Count how many messages from the assistant are in the conversation"""
     return len([msg for msg in conversation if msg.get("role") == "assistant"])
@@ -371,18 +383,15 @@ def main():
     init_session_state()
     
     # Main layout
-    st.title("PowerPoint & Excel Assistant")
-    
-    # Create two columns
-    left_col, chat_col = st.columns([1, 3])
+    st.sidebar.title("PowerPoint & Excel Assistant")
     
     # Files directory and extensions
     files_dir = st.session_state.files_dir
     pptx_extensions = [".pptx", ".ppt"]
     excel_extensions = [".xlsx", ".xls"]
     
-    # Thread management and file selection
-    with left_col:
+    # Thread management and file selection in sidebar
+    with st.sidebar:
         # Thread section
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -412,6 +421,32 @@ def main():
         
         # File selection for current thread
         st.subheader("File Selection")
+        
+        # File upload section
+        with st.expander("Upload New Files", expanded=False):
+            # Single file uploader for both PowerPoint and Excel
+            uploaded_file = st.file_uploader(
+                "Upload PowerPoint or Excel File",
+                type=["ppt", "pptx", "xls", "xlsx"],
+                key=f"{current_thread}_file_uploader",
+                label_visibility="hidden"
+            )
+            if uploaded_file:
+                # Save the uploaded file
+                file_path = save_uploaded_file(uploaded_file, files_dir)
+                
+                # Determine file type based on extension and add to appropriate list
+                file_name = uploaded_file.name.lower()
+                if file_name.endswith((".ppt", ".pptx")):
+                    # Add to PowerPoint list if not already selected
+                    if file_path not in current_thread_data["selected_pptx"]:
+                        current_thread_data["selected_pptx"].append(file_path)
+                    st.success(f"Uploaded and selected PowerPoint: {uploaded_file.name}")
+                elif file_name.endswith((".xls", ".xlsx")):
+                    # Add to Excel list if not already selected
+                    if file_path not in current_thread_data["selected_excel"]:
+                        current_thread_data["selected_excel"].append(file_path)
+                    st.success(f"Uploaded and selected Excel: {uploaded_file.name}")
         
         # List available files
         pptx_files = list_files(files_dir, pptx_extensions)
@@ -447,55 +482,57 @@ def main():
         elif st.session_state.temporal_connected is True:
             st.success("Connected to Temporal server")
     
-    # Chat area
-    with chat_col:
-        # Display current thread info
-        st.subheader(f"Thread: {current_thread}")
+    # Chat area (now uses full width)
+    # Display current thread info
+    st.subheader(f"{current_thread}")
+    
+    # Show selected files
+    selected_pptx = current_thread_data["selected_pptx"]
+    selected_excel = current_thread_data["selected_excel"]
+    
+    if selected_pptx or selected_excel:
+        files_text = []
+        if selected_pptx:
+            files_text.append(f"**PowerPoint:** {', '.join([os.path.basename(f) for f in selected_pptx])}")
+        if selected_excel:
+            files_text.append(f"**Excel:** {', '.join([os.path.basename(f) for f in selected_excel])}")
         
-        # Show selected files
-        if selected_pptx or selected_excel:
-            files_text = []
-            if selected_pptx:
-                files_text.append(f"**PowerPoint:** {', '.join([os.path.basename(f) for f in selected_pptx])}")
-            if selected_excel:
-                files_text.append(f"**Excel:** {', '.join([os.path.basename(f) for f in selected_excel])}")
-            
-            st.info("Selected files: " + " | ".join(files_text))
+        st.info("Selected files: " + " | ".join(files_text))
+    
+    # Create or get workflow for this thread
+    asyncio.run(get_or_create_workflow(workflow_id))
+    
+    # Get conversation history
+    conversation = asyncio.run(get_conversation_history(workflow_id))
+    
+    # Display chat messages with tool calls
+    # st.subheader("Conversation")
+    
+    if conversation:
+        # Use our new function to display the conversation
+        display_conversation(conversation)
+    else:
+        st.info("Send a message to start the conversation.")
+    
+    # Chat input
+    if prompt := st.chat_input("Ask about your PowerPoint or Excel files..."):
+        # Count assistant messages before sending
+        assistant_msg_count = count_assistant_messages(conversation)
         
-        # Create or get workflow for this thread
-        asyncio.run(get_or_create_workflow(workflow_id))
+        # Show user message immediately
+        with st.chat_message("user"):
+            st.write(prompt)
         
-        # Get conversation history
-        conversation = asyncio.run(get_conversation_history(workflow_id))
+        # Send message to the workflow
+        success = asyncio.run(send_user_input(workflow_id, prompt, selected_pptx, selected_excel))
         
-        # Display chat messages with tool calls
-        st.subheader("Conversation")
-        
-        if conversation:
-            # Use our new function to display the conversation
-            display_conversation(conversation)
+        if success:
+            # Poll until we get a new assistant message
+            if poll_for_assistant_response(workflow_id, assistant_msg_count):
+                st.rerun()
         else:
-            st.info("Send a message to start the conversation.")
-        
-        # Chat input
-        if prompt := st.chat_input("Ask about your PowerPoint or Excel files..."):
-            # Count assistant messages before sending
-            assistant_msg_count = count_assistant_messages(conversation)
-            
-            # Show user message immediately
-            with st.chat_message("user"):
-                st.write(prompt)
-            
-            # Send message to the workflow
-            success = asyncio.run(send_user_input(workflow_id, prompt, selected_pptx, selected_excel))
-            
-            if success:
-                # Poll until we get a new assistant message
-                if poll_for_assistant_response(workflow_id, assistant_msg_count):
-                    st.rerun()
-            else:
-                if st.session_state.temporal_connected is False:
-                    st.error("Message not sent: Disconnected from Temporal server")
+            if st.session_state.temporal_connected is False:
+                st.error("Message not sent: Disconnected from Temporal server")
 
 if __name__ == "__main__":
     main() 
