@@ -96,6 +96,14 @@ def init_session_state():
     # Track connection status
     if 'temporal_connected' not in st.session_state:
         st.session_state.temporal_connected = None
+        
+    # Track if we're waiting for a response
+    if 'waiting_for_response' not in st.session_state:
+        st.session_state.waiting_for_response = False
+        
+    # Track the count of assistant messages
+    if 'assistant_msg_count' not in st.session_state:
+        st.session_state.assistant_msg_count = 0
 
 def create_new_thread():
     """Create a new thread with empty file selections and a unique workflow ID"""
@@ -193,11 +201,17 @@ def poll_for_assistant_response(workflow_id, message_count):
     Returns:
         True when a complete assistant response is detected
     """
-    progress_bar = st.progress(0)
+    # Create placeholders for status elements
     message_placeholder = st.empty()
+    progress_placeholder = st.empty()
+    
+    # Show waiting message with the info badge
     message_placeholder.info("Waiting for assistant response...")
     
-    # Create a container for displaying real-time updates
+    # Create a visual separator
+    st.markdown("<hr style='margin-top: 0; margin-bottom: 15px; border-width: 1px; border-color: #f0f2f5;'>", unsafe_allow_html=True)
+    
+    # Create a container for displaying real-time updates AFTER the status elements
     update_container = st.container()
     
     max_attempts = 60
@@ -205,10 +219,11 @@ def poll_for_assistant_response(workflow_id, message_count):
     
     # Track which tool calls we've already seen
     seen_tool_call_ids = set()
+    seen_tool_response_ids = set()
     
     for i in range(max_attempts):
         # Update progress bar
-        progress_bar.progress((i + 1) / max_attempts)
+        progress_placeholder.progress((i + 1) / max_attempts)
         
         # Get current conversation history
         history = asyncio.run(get_conversation_history(workflow_id))
@@ -234,8 +249,14 @@ def poll_for_assistant_response(workflow_id, message_count):
                             tool_name = tool_call["function"]["name"]
                             tool_args = tool_call["function"]["arguments"]
                             
-                            # Show the tool name in yellow
-                            st.markdown(f'<div class="tool-name">📦 {tool_name}</div>', unsafe_allow_html=True)
+                            # Create a GitHub-inspired tool call box
+                            st.markdown(f"""
+                            <div class="tool-call">
+                                <div class="tool-call-header">
+                                    <span class="tool-name">📦 {tool_name}</span>
+                                </div>
+                                <div class="tool-call-body">
+                            """, unsafe_allow_html=True)
                             
                             # Try to format args as JSON
                             try:
@@ -244,17 +265,17 @@ def poll_for_assistant_response(workflow_id, message_count):
                             except:
                                 formatted_args = tool_args
                                 
-                            with st.expander("Arguments", expanded=False):
-                                st.code(formatted_args, language="json")
+                            st.code(formatted_args, language="json")
+                            st.markdown("</div></div>", unsafe_allow_html=True)
             
             # Find new tool responses
-            for i, msg in enumerate(history):
-                if msg.get("role") == "tool":
-                    tool_call_id = msg.get("tool_call_id", "")
+            for tool_msg in history:
+                if tool_msg.get("role") == "tool":
+                    tool_call_id = tool_msg.get("tool_call_id", "")
                     
                     # Check if this is a response to a tool call we've seen but haven't seen the response yet
-                    if tool_call_id in seen_tool_call_ids and f"response_{tool_call_id}" not in seen_tool_call_ids:
-                        seen_tool_call_ids.add(f"response_{tool_call_id}")
+                    if tool_call_id in seen_tool_call_ids and tool_call_id not in seen_tool_response_ids:
+                        seen_tool_response_ids.add(tool_call_id)
                         
                         # Get the tool name from the matching tool call
                         tool_name = "Unknown Tool"
@@ -266,21 +287,51 @@ def poll_for_assistant_response(workflow_id, message_count):
                                         break
                         
                         with update_container:
-                            st.markdown(f'<div class="tool-response-header">✅ Response from: {tool_name}</div>', unsafe_allow_html=True)
+                            # Get the tool response content
+                            tool_response = tool_msg.get("content", "")
+                            
+                            # Display the tool response in a stylized box
+                            st.markdown(f"""
+                            <div class="tool-call">
+                                <div class="tool-call-header" style="background-color: #e6ffed;">
+                                    <span class="tool-response-header">✅ Response from: {tool_name}</span>
+                                </div>
+                                <div class="tool-call-body">
+                            """, unsafe_allow_html=True)
+                            
+                            # Determine how to display the response content
+                            if tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
+                                st.code(tool_response, language="xml")
+                            elif "```" in tool_response or tool_response.startswith("|"):
+                                # This is likely markdown or a table
+                                st.markdown(tool_response)
+                            else:
+                                st.write(tool_response)
+                                
+                            st.markdown("</div></div>", unsafe_allow_html=True)
+                            
+                            # Add space between responses
+                            st.markdown("<br>", unsafe_allow_html=True)
         
         # Check if we have a complete assistant response (non-empty content)
         if (len(assistant_messages) > message_count and 
             assistant_messages[-1].get("content", "") != ""):
-            progress_bar.empty()
+            # Clear the status elements
             message_placeholder.empty()
+            progress_placeholder.empty()
             return True
             
         # Wait before polling again
         time.sleep(delay)
+        
+        # Force a UI refresh (experimental)
+        # This uses a trick to get Streamlit to refresh the UI during polling
+        with st.empty():
+            pass
     
     # Timeout occurred
-    progress_bar.empty()
     message_placeholder.warning("Timed out waiting for assistant response.")
+    progress_placeholder.empty()
     return False
 
 def list_files(directory, extensions):
@@ -393,7 +444,7 @@ def main():
     # Thread management and file selection in sidebar
     with st.sidebar:
         # Thread section
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([6, 1])
         with col1:
             st.markdown("<h3>Threads</h3>", unsafe_allow_html=True)
         with col2:
@@ -409,7 +460,8 @@ def main():
             if st.button(
                 f"{thread_id}",
                 key=f"thread_{thread_id}",
-                help=f"Created: {thread_data['created_at']}"
+                help=f"Created: {thread_data['created_at']}",
+                use_container_width=True
             ):
                 st.session_state.current_thread = thread_id
                 st.rerun()
@@ -505,34 +557,50 @@ def main():
     # Get conversation history
     conversation = asyncio.run(get_conversation_history(workflow_id))
     
-    # Display chat messages with tool calls
-    # st.subheader("Conversation")
-    
-    if conversation:
-        # Use our new function to display the conversation
-        display_conversation(conversation)
+    # Check if we're waiting for a response or ready for input
+    if st.session_state.waiting_for_response:
+        # We're already polling, continue with that
+        assistant_msg_count = st.session_state.assistant_msg_count
+        
+        # Display the conversation history (including the user message)
+        if conversation:
+            display_conversation(conversation)
+            
+        # Continue polling
+        if poll_for_assistant_response(workflow_id, assistant_msg_count):
+            # Got full response, return to input mode
+            st.session_state.waiting_for_response = False
+            st.rerun()
     else:
-        st.info("Send a message to start the conversation.")
-    
-    # Chat input
-    if prompt := st.chat_input("Ask about your PowerPoint or Excel files..."):
-        # Count assistant messages before sending
-        assistant_msg_count = count_assistant_messages(conversation)
-        
-        # Show user message immediately
-        with st.chat_message("user"):
-            st.write(prompt)
-        
-        # Send message to the workflow
-        success = asyncio.run(send_user_input(workflow_id, prompt, selected_pptx, selected_excel))
-        
-        if success:
-            # Poll until we get a new assistant message
-            if poll_for_assistant_response(workflow_id, assistant_msg_count):
-                st.rerun()
+        # Display conversation history for non-polling mode
+        if conversation:
+            # Use our function to display the conversation
+            display_conversation(conversation)
         else:
-            if st.session_state.temporal_connected is False:
-                st.error("Message not sent: Disconnected from Temporal server")
+            st.info("Send a message to start the conversation.")
+        
+        # Chat input
+        if prompt := st.chat_input("Ask about your PowerPoint or Excel files..."):
+            # Count assistant messages before sending
+            assistant_msg_count = count_assistant_messages(conversation)
+            
+            # Store in session state for polling
+            st.session_state.assistant_msg_count = assistant_msg_count
+            
+            # Show user message immediately
+            with st.chat_message("user"):
+                st.write(prompt)
+            
+            # Send message to the workflow
+            success = asyncio.run(send_user_input(workflow_id, prompt, selected_pptx, selected_excel))
+            
+            if success:
+                # Start polling and mark that we're waiting for a response
+                st.session_state.waiting_for_response = True
+                st.rerun()  # Rerun to enter polling mode
+            else:
+                if st.session_state.temporal_connected is False:
+                    st.error("Message not sent: Disconnected from Temporal server")
 
 if __name__ == "__main__":
     main() 
