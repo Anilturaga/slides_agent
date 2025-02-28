@@ -104,6 +104,10 @@ def init_session_state():
     # Track the count of assistant messages
     if 'assistant_msg_count' not in st.session_state:
         st.session_state.assistant_msg_count = 0
+        
+    # Store the latest user message
+    if 'latest_user_message' not in st.session_state:
+        st.session_state.latest_user_message = None
 
 def create_new_thread():
     """Create a new thread with empty file selections and a unique workflow ID"""
@@ -118,6 +122,8 @@ def create_new_thread():
     }
     
     st.session_state.current_thread = thread_id
+    st.session_state.waiting_for_response = False
+    st.session_state.latest_user_message = None
     return thread_id
 
 async def get_temporal_client():
@@ -464,6 +470,8 @@ def main():
                 use_container_width=True
             ):
                 st.session_state.current_thread = thread_id
+                st.session_state.waiting_for_response = False
+                st.session_state.latest_user_message = None
                 st.rerun()
         
         # Get current thread data
@@ -562,14 +570,25 @@ def main():
         # We're already polling, continue with that
         assistant_msg_count = st.session_state.assistant_msg_count
         
-        # Display the conversation history (including the user message)
+        # Display the conversation history 
         if conversation:
             display_conversation(conversation)
             
+        # Also explicitly display the latest user message if it's not in the conversation yet
+        # This ensures it's visible during streaming even if not yet included in the workflow history
+        latest_user_prompt = st.session_state.latest_user_message
+        if latest_user_prompt:
+            # Check if the latest message is already in the conversation
+            user_messages = [msg.get("content", "") for msg in conversation if msg.get("role") == "user"]
+            if not user_messages or user_messages[-1] != latest_user_prompt:
+                with st.chat_message("user"):
+                    st.write(latest_user_prompt)
+        
         # Continue polling
         if poll_for_assistant_response(workflow_id, assistant_msg_count):
             # Got full response, return to input mode
             st.session_state.waiting_for_response = False
+            st.session_state.latest_user_message = None  # Clear the stored message
             st.rerun()
     else:
         # Display conversation history for non-polling mode
@@ -586,6 +605,7 @@ def main():
             
             # Store in session state for polling
             st.session_state.assistant_msg_count = assistant_msg_count
+            st.session_state.latest_user_message = prompt  # Store the latest user message
             
             # Show user message immediately
             with st.chat_message("user"):
