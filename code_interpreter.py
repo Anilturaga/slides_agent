@@ -72,13 +72,11 @@ class CodeExecutor:
             self._ensure_dependencies([
                 'matplotlib',
                 'pandas',
-                'numpy',
+                # 'numpy',
                 'ipython',
                 'pillow',
                 'plotly',  # For advanced charts
                 'seaborn',  # For statistical visualizations
-                'python-pptx',  # For PowerPoint integration
-                'openpyxl'   # For Excel integration
             ])
             
         self.km = KernelManager()

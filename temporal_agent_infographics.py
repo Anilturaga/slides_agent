@@ -270,8 +270,8 @@ def define_tools():
         {
             "type": "function",
             "function": {
-                "name": "data_analysis",
-                "description": "Execute IPython Kernel code with data analysis and visualization capabilities on an Excel sheet",
+                "name": "get_data_analysis",
+                "description": "Get data analysis and visualizations(Infographics) on an Excel sheet using IPython Kernel Code",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -371,8 +371,8 @@ async def execute_tool(workflow_id: str, tool_name: str, tool_args: Dict) -> str
         return await modify_slide(tool_args["file_path"], tool_args["slide_index"], tool_args["code"])
     elif tool_name == "modify_excel":
         return await modify_excel(tool_args["file_path"], tool_args["sheet_name"], tool_args["code"])
-    elif tool_name == "data_analysis":
-        return await run_python_code(
+    elif tool_name == "get_data_analysis":
+        return await get_data_analysis(
             tool_args["file_path"],
             tool_args["sheet_name"],
             tool_args["code"],
@@ -410,7 +410,7 @@ async def cleanup_code_executor(workflow_id: str) -> Dict:
         return {"status": "error", "message": f"Failed to clean up code executor: {str(e)}"}
 
 @activity.defn
-async def run_python_code(file_path: str, sheet_name: str, code: str, workflow_id: str = None) -> Dict:
+async def get_data_analysis(file_path: str, sheet_name: str, code: str, workflow_id: str = None) -> Dict:
     """Execute Python code with Excel data already loaded as df."""
     import json
     # Get the executor for this workflow
@@ -561,7 +561,7 @@ class PPTAgentWorkflow:
         await workflow.execute_activity(
             setup_code_executor,
             args=[self.workflow_id],
-            start_to_close_timeout=timedelta(seconds=60)
+            start_to_close_timeout=timedelta(minutes=3)
         )
         
         try:
@@ -602,11 +602,11 @@ You have access to the following tools:
 2. get_excel_data - Get data from an Excel sheet as a markdown table. Use this tool to analyze data structure before proceeding with any excel modifications.
 3. modify_slide - Use this tool to modify any Slide using Python code.
 4. modify_excel - Use this tool to modify any Excel sheet using Python code.
-5. data_analysis - Execute IPython Kernel code for data analysis and visualization.
+5. get_data_analysis - Get data analysis and visualizations(infographics) on an Excel sheet using IPython code.
 
 When modifying slides, you have access to a 'slide' object from the python-pptx library.
 When modifying Excel, you have access to a 'df' DataFrame object from pandas.
-When using the data_analysis, you have access to libraries like pandas, matplotlib, numpy, and plotly. You also have access to a 'df' DataFrame object (Excel sheet) from pandas.
+When using the get_data_analysis, you have access to libraries like pandas, matplotlib, numpy, and plotly. You also have access to a 'df' DataFrame object (Excel sheet) from pandas.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
@@ -672,11 +672,11 @@ You have access to the following tools:
 2. get_excel_data - Get data from an Excel sheet as a markdown table
 3. modify_slide - Modify a slide using Python code
 4. modify_excel - Modify an Excel sheet using Python code
-5. data_analysis - Execute Python code for data analysis and visualization.
+5. get_data_analysis - Get data analysis and visualizations(infographics) on an Excel sheet using IPython code.
 
 When modifying slides, you have access to a 'slide' object from the python-pptx library.
 When modifying Excel, you have access to a 'df' DataFrame object from pandas.
-When using the data_analysis, you have access to libraries like pandas, matplotlib, numpy, and plotly. You also have access to a 'df' DataFrame object (Excel sheet) from pandas.
+When using the get_data_analysis, you have access to libraries like pandas, matplotlib, numpy, and plotly. You also have access to a 'df' DataFrame object (Excel sheet) from pandas.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
@@ -742,7 +742,7 @@ async def run_worker():
             create_file_path_mapping,
             call_llm,
             execute_tool,
-            run_python_code,
+            get_data_analysis,
             setup_code_executor,
             cleanup_code_executor
         ]
