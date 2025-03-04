@@ -6,6 +6,9 @@ from datetime import datetime
 import os
 import uuid
 import json
+import base64
+from PIL import Image
+import io
 
 # Set page config first
 st.set_page_config(layout="wide", page_title="PowerPoint & Excel Assistant")
@@ -25,50 +28,18 @@ st.markdown("""
     border-left: 5px solid #4e8cff;
 }
 
-/* GitHub-inspired styling */
-.tool-call {
-    background-color: #f6f8fa;
-    border: 1px solid #e1e4e8;
-    border-radius: 6px;
-    margin-bottom: 16px;
-    overflow: hidden;
-}
-.tool-call-header {
-    background-color: #f1f8ff;
-    border-bottom: 1px solid #e1e4e8;
-    padding: 8px 16px;
-    font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
-}
-.tool-call-body {
-    padding: 16px;
-}
-.tool-response {
-    background-color: #f8f9fa;
-    border-top: 1px solid #e1e4e8;
-    padding: 8px 16px;
-}
-
-/* Tool name and response styling */
-.tool-name {
-    color: #e9b914;
-    font-weight: bold;
-    font-family: monospace;
-    background-color: #fffbe6;
-    padding: 2px 6px;
-    border-radius: 3px;
-}
-.tool-response-header {
-    color: #28a745;
-    font-weight: bold;
-    background-color: #e6ffed;
-    padding: 2px 6px;
-    border-radius: 3px;
-    margin-top: 10px;
-}
-
 /* File selection styling */
 .file-section {
     margin-top: 20px;
+}
+
+/* Image preview styling */
+.image-preview {
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    background-color: white;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -93,6 +64,9 @@ def init_session_state():
     if 'files_dir' not in st.session_state:
         st.session_state.files_dir = "files"
     
+    # Create files directory if it doesn't exist
+    os.makedirs(st.session_state.files_dir, exist_ok=True)
+    
     # Track connection status
     if 'temporal_connected' not in st.session_state:
         st.session_state.temporal_connected = None
@@ -108,6 +82,10 @@ def init_session_state():
     # Store the latest user message
     if 'latest_user_message' not in st.session_state:
         st.session_state.latest_user_message = None
+        
+    # Store the currently selected image for display
+    if 'selected_image' not in st.session_state:
+        st.session_state.selected_image = None
 
 def create_new_thread():
     """Create a new thread with empty file selections and a unique workflow ID"""
@@ -255,24 +233,19 @@ def poll_for_assistant_response(workflow_id, message_count):
                             tool_name = tool_call["function"]["name"]
                             tool_args = tool_call["function"]["arguments"]
                             
-                            # Create a GitHub-inspired tool call box
-                            st.markdown(f"""
-                            <div class="tool-call">
-                                <div class="tool-call-header">
-                                    <span class="tool-name">📦 {tool_name}</span>
-                                </div>
-                                <div class="tool-call-body">
-                            """, unsafe_allow_html=True)
+                            # Simplified tool call display using Streamlit components
+                            st.markdown(f"**📦 Tool Call: {tool_name}**")
                             
-                            # Try to format args as JSON
-                            try:
-                                args_dict = json.loads(tool_args)
-                                formatted_args = json.dumps(args_dict, indent=2)
-                            except:
-                                formatted_args = tool_args
-                                
-                            st.code(formatted_args, language="json")
-                            st.markdown("</div></div>", unsafe_allow_html=True)
+                            # Create a colored container for the tool call
+                            with st.container(border=True):
+                                # Try to format args as JSON
+                                try:
+                                    args_dict = json.loads(tool_args)
+                                    formatted_args = json.dumps(args_dict, indent=2)
+                                except:
+                                    formatted_args = tool_args
+                                    
+                                st.code(formatted_args, language="json")
             
             # Find new tool responses
             for tool_msg in history:
@@ -296,28 +269,41 @@ def poll_for_assistant_response(workflow_id, message_count):
                             # Get the tool response content
                             tool_response = tool_msg.get("content", "")
                             
-                            # Display the tool response in a stylized box
-                            st.markdown(f"""
-                            <div class="tool-call">
-                                <div class="tool-call-header" style="background-color: #e6ffed;">
-                                    <span class="tool-response-header">✅ Response from: {tool_name}</span>
-                                </div>
-                                <div class="tool-call-body">
-                            """, unsafe_allow_html=True)
+                            # Simplified tool response display
+                            st.markdown(f"**✅ Response from: {tool_name}**")
                             
-                            # Determine how to display the response content
-                            if tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
-                                st.code(tool_response, language="xml")
-                            elif "```" in tool_response or tool_response.startswith("|"):
-                                # This is likely markdown or a table
-                                st.markdown(tool_response)
-                            else:
-                                st.write(tool_response)
-                                
-                            st.markdown("</div></div>", unsafe_allow_html=True)
+                            # Create a colored container for the response
+                            with st.container(border=True):
+                                # Handle different types of responses
+                                if tool_name == "get_image" and tool_response.startswith("data:image/"):
+                                    # This is a base64 image data URL
+                                    st.markdown("**Image Preview:**")
+                                    st.image(tool_response)
+                                elif tool_response.startswith("Code executed successfully. Image saved to:"):
+                                    # Extract the image path and display it if possible
+                                    st.write(tool_response)
+                                    try:
+                                        # Get just the filename part
+                                        path_text = tool_response.split("Image saved to:")[1].strip()
+                                        # Try direct path first
+                                        image_path = path_text
+                                        # If not found, try resolving relative to files directory
+                                        if not os.path.exists(image_path):
+                                            image_path = os.path.join(st.session_state.files_dir, os.path.basename(path_text))
+                                        
+                                        if os.path.exists(image_path):
+                                            st.markdown("**Image Preview:**")
+                                            st.image(image_path)
+                                    except Exception as e:
+                                        st.error(f"Error displaying image: {str(e)}")
+                                elif tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
+                                    st.code(tool_response, language="xml")
+                                elif "```" in tool_response or tool_response.startswith("|"):
+                                    # This is likely markdown or a table
+                                    st.markdown(tool_response)
+                                else:
+                                    st.write(tool_response)
                             
-                            # Add space between responses
-                            st.markdown("<br>", unsafe_allow_html=True)
         
         # Check if we have a complete assistant response (non-empty content)
         if (len(assistant_messages) > message_count and 
@@ -367,8 +353,7 @@ def count_assistant_messages(conversation):
 
 def display_conversation(conversation):
     """
-    Display conversation with tool calls in a GitHub workspace-inspired UI
-    with yellow tool names and green responses
+    Display conversation with tool calls in a simplified UI using Streamlit native components
     
     Args:
         conversation: List of message objects from the conversation history
@@ -401,39 +386,65 @@ def display_conversation(conversation):
                             tool_name = tool_call["function"]["name"]
                             tool_args = tool_call["function"]["arguments"]
                             
-                            # Format JSON args for better display
-                            try:
-                                args_dict = json.loads(tool_args)
-                                formatted_args = json.dumps(args_dict, indent=2)
-                            except:
-                                formatted_args = tool_args
+                            # Display the tool name
+                            st.markdown(f"**📦 Tool Call: {tool_name}**")
                             
-                            # Show the tool name in yellow
-                            st.markdown(f'<div class="tool-name">📦 {tool_name}</div>', unsafe_allow_html=True)
-                            
-                            # Show the arguments in a code block
-                            st.code(formatted_args, language="json")
+                            # Create a container for the tool call
+                            with st.container(border=True):
+                                # Format JSON args for better display
+                                try:
+                                    args_dict = json.loads(tool_args)
+                                    formatted_args = json.dumps(args_dict, indent=2)
+                                except:
+                                    formatted_args = tool_args
+                                
+                                # Show the arguments in a code block
+                                st.code(formatted_args, language="json")
                             
                             # Find corresponding tool response if available
                             for next_msg in conversation[i+2:]:  # +2 to account for system message and current index
                                 if next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == tool_id:
                                     tool_response = next_msg.get("content", "")
                                     
-                                    # Display the response header in green
-                                    st.markdown('<div class="tool-response-header">✅ Response</div>', unsafe_allow_html=True)
+                                    # Display the response
+                                    st.markdown(f"**✅ Response from: {tool_name}**")
                                     
-                                    # Determine how to display the response content
-                                    if tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
-                                        st.code(tool_response, language="xml")
-                                    elif "```" in tool_response or tool_response.startswith("|"):
-                                        # This is likely markdown or a table
-                                        st.markdown(tool_response)
-                                    else:
-                                        st.write(tool_response)
+                                    # Create a container for the response
+                                    with st.container(border=True):
+                                        # Handle different types of responses
+                                        if tool_name == "get_image" and tool_response.startswith("data:image/"):
+                                            # This is a base64 image data URL
+                                            st.markdown("**Image Preview:**")
+                                            st.image(tool_response)
+                                        elif tool_response.startswith("Code executed successfully. Image saved to:"):
+                                            # Extract the image path and display it if possible
+                                            st.write(tool_response)
+                                            try:
+                                                # Get just the filename part
+                                                path_text = tool_response.split("Image saved to:")[1].strip()
+                                                # Try direct path first
+                                                image_path = path_text
+                                                # If not found, try resolving relative to files directory
+                                                if not os.path.exists(image_path):
+                                                    image_path = os.path.join(st.session_state.files_dir, os.path.basename(path_text))
+                                                
+                                                if os.path.exists(image_path):
+                                                    st.markdown("**Image Preview:**")
+                                                    st.image(image_path)
+                                            except Exception as e:
+                                                st.error(f"Error displaying image: {str(e)}")
+                                        elif tool_response.startswith("<slide>") or tool_response.startswith("Error:"):
+                                            st.code(tool_response, language="xml")
+                                        elif "```" in tool_response or tool_response.startswith("|"):
+                                            # This is likely markdown or a table
+                                            st.markdown(tool_response)
+                                        else:
+                                            st.code(tool_response)
+                                    
                                     break
                             
-                            # Add some space between tool calls
-                            st.markdown("<hr style='margin: 15px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                            # Add some space between tool calls if no response was found
+                            st.markdown("")
 
 def main():
     # Initialize session state
@@ -541,6 +552,45 @@ def main():
             st.error("Disconnected from Temporal server")
         elif st.session_state.temporal_connected is True:
             st.success("Connected to Temporal server")
+            
+        # Images section - list available images
+        with st.expander("Generated Images", expanded=True):
+            images_dir = files_dir
+            if os.path.exists(images_dir):
+                image_files = [f for f in os.listdir(images_dir) 
+                              if os.path.isfile(os.path.join(images_dir, f)) and 
+                              f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg'))]
+                
+                if not image_files:
+                    st.info("No images generated yet.")
+                else:
+                    st.write(f"{len(image_files)} images available:")
+                    # Create grid of image thumbnails
+                    cols = st.columns(2)
+                    for i, img_file in enumerate(image_files):
+                        img_path = os.path.join(images_dir, img_file)
+                        with cols[i % 2]:
+                            st.image(img_path, width=120, caption=img_file)
+                            # Add a button to view the full image
+                            if st.button(f"View", key=f"view_img_{i}"):
+                                st.session_state.selected_image = img_path
+                                st.rerun()
+            else:
+                st.info("Files directory not found.")
+                
+            # Display selected image in a modal-like container if exists
+            if 'selected_image' in st.session_state and st.session_state.selected_image:
+                img_path = st.session_state.selected_image
+                if os.path.exists(img_path):
+                    st.subheader(f"Image: {os.path.basename(img_path)}")
+                    st.image(img_path)
+                    # "Close" button
+                    if st.button("Close"):
+                        st.session_state.selected_image = None
+                        st.rerun()
+                else:
+                    st.error("Image file not found.")
+                    st.session_state.selected_image = None
     
     # Chat area (now uses full width)
     # Display current thread info

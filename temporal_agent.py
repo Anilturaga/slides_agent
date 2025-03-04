@@ -171,6 +171,89 @@ async def modify_excel(file_path: str, sheet_name: str, code: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}\n\nCode attempted to execute:\n{code}"
 
+@activity.defn
+async def execute_code(code: str) -> str:
+    """Execute Python code for data analysis and visualization. The LLM should include all necessary imports in the code it generates and handle opening any files it needs based on file names and sheet names known to the LLM. Allowed libraries include: pandas, numpy, matplotlib, plotly, os, datetime, uuid. Helper functions save_plotly_fig() and save_matplotlib_fig() are available to save visualizations."""
+    try:
+        import os
+        import uuid
+        
+        # Create files directory if it doesn't exist
+        images_dir = "files"
+        os.makedirs(images_dir, exist_ok=True)
+        
+        # Helper function to save plotly figures
+        def save_plotly_fig(fig, filename=None):
+            if filename is None:
+                filename = f"{uuid.uuid4()}.png"
+            # Ensure the filename has an extension
+            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
+                filename = f"{filename}.png"
+            image_path = os.path.join(images_dir, filename)
+            fig.write_image(image_path)
+            return image_path
+        
+        # Helper function to save matplotlib figures
+        def save_matplotlib_fig(filename=None):
+            if filename is None:
+                filename = f"{uuid.uuid4()}.png"
+            # Ensure the filename has an extension
+            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
+                filename = f"{filename}.png"
+            image_path = os.path.join(images_dir, filename)
+            plt.savefig(image_path)
+            plt.close()
+            return image_path
+        
+        # Create a local namespace with only helper functions and directory info
+        local_vars = {
+            'images_dir': images_dir,
+            'save_plotly_fig': save_plotly_fig,
+            'save_matplotlib_fig': save_matplotlib_fig,
+        }
+        
+        # Execute the code
+        result = exec(code, {}, local_vars)
+        
+        # Check if an image path was returned or stored in image_path variable
+        if 'image_path' in local_vars:
+            return f"Code executed successfully. Image saved to: {local_vars['image_path']}"
+        # Check if any Plotly figures were created but not saved
+        elif 'fig' in local_vars and hasattr(local_vars['fig'], 'write_image'):
+            image_path = save_plotly_fig(local_vars['fig'])
+            return f"Code executed successfully. Plotly figure automatically saved to: {image_path}"
+        # Check if any matplotlib figures were created but not saved
+        elif 'plt' in local_vars and hasattr(local_vars['plt'], 'get_fignums') and local_vars['plt'].get_fignums():
+            image_path = save_matplotlib_fig()
+            return f"Code executed successfully. Matplotlib figure automatically saved to: {image_path}"
+        else:
+            return "Code executed successfully."
+    except Exception as e:
+        return f"Error executing code: {str(e)}\n\nCode attempted to execute:\n{code}"
+
+@activity.defn
+async def get_image(image_path: str) -> str:
+    """Get the base64 encoded string of an image file."""
+    try:
+        import base64
+        import os
+        
+        if not os.path.exists(image_path):
+            return f"Error: Image file not found at {image_path}"
+        
+        with open(image_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        # Get file extension
+        file_extension = os.path.splitext(image_path)[1].lower().replace('.', '')
+        
+        # Create a data URL
+        data_url = f"data:image/{file_extension};base64,{encoded_string}"
+        
+        return data_url
+    except Exception as e:
+        return f"Error reading image: {str(e)}"
+
 # LLM Tools Definition
 def define_tools():
     """Define tools for the LLM to interact with files."""
@@ -266,6 +349,40 @@ def define_tools():
                     "required": ["file_path", "sheet_name", "code"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_code",
+                "description": "Execute Python code for data analysis and visualization. The LLM should include all necessary imports in the code it generates and handle opening any files it needs based on file names and sheet names known to the LLM. Allowed libraries include: pandas, numpy, matplotlib, plotly, os, datetime, uuid. Helper functions save_plotly_fig() and save_matplotlib_fig() are available to save visualizations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "Python code to execute. Should include all imports and file opening operations. Can use libraries like pandas for data manipulation and plotly/matplotlib for creating visualizations."
+                        }
+                    },
+                    "required": ["code"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_image",
+                "description": "Get the base64 encoded string of an image file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Path to the image file"
+                        }
+                    },
+                    "required": ["image_path"]
+                }
+            }
         }
     ]
 
@@ -298,6 +415,16 @@ async def create_memory_snapshot(pptx_files: List[str], excel_files: List[str]) 
         except Exception as e:
             workbook_name = os.path.basename(file_path)
             memory["Memory"][workbook_name] = [f"Error: {str(e)}"]
+    
+    # Add images from the files directory if it exists
+    images_dir = "files"
+    if os.path.exists(images_dir) and os.path.isdir(images_dir):
+        # Find all image files in the directory
+        images = [f for f in os.listdir(images_dir) 
+                 if os.path.isfile(os.path.join(images_dir, f)) and 
+                 f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg'))]
+        if images:
+            memory["Memory"]["Images"] = images
     
     return memory
 
@@ -346,6 +473,10 @@ async def execute_tool(tool_name: str, tool_args: Dict) -> str:
         return await modify_slide(tool_args["file_path"], tool_args["slide_index"], tool_args["code"])
     elif tool_name == "modify_excel":
         return await modify_excel(tool_args["file_path"], tool_args["sheet_name"], tool_args["code"])
+    elif tool_name == "execute_code":
+        return await execute_code(tool_args["code"])
+    elif tool_name == "get_image":
+        return await get_image(tool_args["image_path"])
     else:
         return f"Unknown tool: {tool_name}"
 
@@ -408,13 +539,16 @@ File paths mapping:
 {file_mapping_str}
 
 You have access to the following tools:
-1. get_slide - Get the XML representation of a slide. Use this tool to examine slide structure/content before proceeding with any slide modifications.
-2. get_excel_data - Get data from an Excel sheet as a markdown table. Use this tool to analyze data structure before proceeding with any excel modifications.
-3. modify_slide - Use this tool to modify any Slide using Python code.
-4. modify_excel - Use this tool to modify any Excel sheet using Python code.
+1. get_slide - Get the XML representation of a slide
+2. get_excel_data - Get data from an Excel sheet as a markdown table
+3. modify_slide - Modify a slide using Python code
+4. modify_excel - Modify an Excel sheet using Python code
+5. execute_code - Execute Python code with pandas and plotly to analyze Excel data and create visualizations. The code has access to the following variables: df (DataFrame of the Excel file), pd (pandas), px (plotly express), go (plotly graph objects), plt (matplotlib.pyplot), np (numpy), file_path (the path to the Excel file), and helper functions save_plotly_fig() and save_matplotlib_fig() to save visualizations to the files directory.
+6. get_image - Get the base64 encoded string of an image file
 
 When modifying slides, you have access to a 'slide' object from the python-pptx library.
 When modifying Excel, you have access to a 'df' DataFrame object from pandas.
+When using execute_code, all the files reside in "files" directory and you must save the images to the same directory.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
@@ -480,9 +614,12 @@ You have access to the following tools:
 2. get_excel_data - Get data from an Excel sheet as a markdown table
 3. modify_slide - Modify a slide using Python code
 4. modify_excel - Modify an Excel sheet using Python code
+5. execute_code - Execute Python code with pandas and plotly to analyze Excel data and create visualizations. The code has access to the following variables: df (DataFrame of the Excel file), pd (pandas), px (plotly express), go (plotly graph objects), plt (matplotlib.pyplot), np (numpy), and helper functions save_plotly_fig() and save_matplotlib_fig() to save visualizations to the files directory.
+6. get_image - Get the base64 encoded string of an image file
 
 When modifying slides, you have access to a 'slide' object from the python-pptx library.
 When modifying Excel, you have access to a 'df' DataFrame object from pandas.
+When using execute_code, all the files reside in "files" directory and you must save the images to the same directory.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
