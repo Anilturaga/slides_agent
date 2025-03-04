@@ -172,34 +172,34 @@ async def execute_code(code: str) -> str:
         # Execute the code
         result = exec(code, {}, local_vars)
         
-        # Check if a PowerPoint slide was modified
-        if 'slide' in local_vars and 'prs' in local_vars and 'pptx_file_path' in local_vars:
-            # Save the modified presentation
-            local_vars['prs'].save(local_vars['pptx_file_path'])
+        # # Check if a PowerPoint slide was modified
+        # if 'slide' in local_vars and 'prs' in local_vars and 'pptx_file_path' in local_vars:
+        #     # Save the modified presentation
+        #     local_vars['prs'].save(local_vars['pptx_file_path'])
             
-            # Return the XML representation of the modified slide if we have the slide_index
-            if 'slide_index' in local_vars:
-                slide = local_vars['prs'].slides[local_vars['slide_index']]
-                xml_representation = get_slide_xml_representation(slide)
-                return f"PowerPoint slide modified successfully.\n\n{xml_representation}"
-            return "PowerPoint presentation modified successfully."
+        #     # Return the XML representation of the modified slide if we have the slide_index
+        #     if 'slide_index' in local_vars:
+        #         slide = local_vars['prs'].slides[local_vars['slide_index']]
+        #         xml_representation = get_slide_xml_representation(slide)
+        #         return f"PowerPoint slide modified successfully.\n\n{xml_representation}"
+        #     return "PowerPoint presentation modified successfully."
         
-        # Check if an Excel sheet was modified
-        if 'df' in local_vars and 'excel_file_path' in local_vars and 'sheet_name' in local_vars:
-            # Save the modified DataFrame back to the Excel file
-            with pd.ExcelWriter(local_vars['excel_file_path'], engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                local_vars['df'].to_excel(writer, sheet_name=local_vars['sheet_name'], index=False)
+        # # Check if an Excel sheet was modified
+        # if 'df' in local_vars and 'excel_file_path' in local_vars and 'sheet_name' in local_vars:
+        #     # Save the modified DataFrame back to the Excel file
+        #     with pd.ExcelWriter(local_vars['excel_file_path'], engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+        #         local_vars['df'].to_excel(writer, sheet_name=local_vars['sheet_name'], index=False)
             
-            # Return the updated table as markdown
-            return f"Excel sheet modified successfully.\n\n{local_vars['df'].to_markdown(index=False)}"
+        #     # Return the updated table as markdown
+        #     return f"Excel sheet modified successfully.\n\n{local_vars['df'].to_markdown(index=False)}"
         
-        # Check if an image path was returned or stored in image_path variable
-        if 'image_path' in local_vars:
-            return f"Code executed successfully. Image saved to: {local_vars['image_path']}"
+        # # Check if an image path was returned or stored in image_path variable
+        # if 'image_path' in local_vars:
+        #     return f"Code executed successfully. Image saved to: {local_vars['image_path']}"
         
-        # Check if there's any output to return
-        if 'output' in local_vars:
-            return str(local_vars['output'])
+        # # Check if there's any output to return
+        # if 'output' in local_vars:
+        #     return str(local_vars['output'])
             
         return "Code executed successfully."
     except Exception as e:
