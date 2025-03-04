@@ -302,7 +302,7 @@ def poll_for_assistant_response(workflow_id, message_count):
                                     # This is likely markdown or a table
                                     st.markdown(tool_response)
                                 else:
-                                    st.write(tool_response)
+                                    st.code(tool_response)
                             
         
         # Check if we have a complete assistant response (non-empty content)

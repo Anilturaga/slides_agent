@@ -4,7 +4,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from datetime import timedelta
 from typing import List, Dict, Any, Optional
-
+import json
+from matplotlib import pyplot as plt
 
 # Helper Functions for File Processing
 @activity.defn
@@ -59,15 +60,15 @@ async def get_slide_xml(file_path: str, slide_index: int) -> str:
                     xml_representation += "      </text_frame>\n"
                 
                 # Add table if present
-                if hasattr(shape, "table") and shape.table:
-                    xml_representation += "      <table>\n"
-                    for row in shape.table.rows:
-                        xml_representation += "        <row>\n"
-                        for cell in row.cells:
-                            cell_text = cell.text_frame.text if cell.text_frame else ""
-                            xml_representation += f"          <cell>{cell_text}</cell>\n"
-                        xml_representation += "        </row>\n"
-                    xml_representation += "      </table>\n"
+                # if hasattr(shape, "table") and shape.table:
+                #     xml_representation += "      <table>\n"
+                #     for row in shape.table.rows:
+                #         xml_representation += "        <row>\n"
+                #         for cell in row.cells:
+                #             cell_text = cell.text_frame.text if cell.text_frame else ""
+                #             xml_representation += f"          <cell>{cell_text}</cell>\n"
+                #         xml_representation += "        </row>\n"
+                #     xml_representation += "      </table>\n"
                 
                 xml_representation += "    </shape>\n"
             xml_representation += "  </shapes>\n"
@@ -81,7 +82,7 @@ async def get_slide_xml(file_path: str, slide_index: int) -> str:
 
 @activity.defn
 async def get_excel_table(file_path: str, sheet_name: str) -> str:
-    """Get markdown table representation of an Excel sheet."""
+    """Get the Excel table as a markdown table."""
     import pandas as pd
     
     try:
@@ -91,25 +92,42 @@ async def get_excel_table(file_path: str, sheet_name: str) -> str:
         return f"Error: {str(e)}"
 
 @activity.defn
-async def modify_slide(file_path: str, slide_index: int, code: str) -> str:
-    """Modify a slide using Python code."""
-    from pptx import Presentation
-    
+async def execute_code(code: str) -> str:
+    """Execute Python code for data analysis, visualization, and file modification. The code can analyze Excel data, create visualizations, and modify PowerPoint slides and Excel sheets. Include all necessary imports in the code and handle opening any files based on known file names and sheet names. You can use libraries like pandas, numpy, matplotlib, plotly, pptx, os, datetime, and uuid."""
     try:
-        # Create a local variable to hold the presentation
-        prs = Presentation(file_path)
-        if 0 <= slide_index < len(prs.slides):
-            slide = prs.slides[slide_index]
+        import os
+        import uuid
+        import pandas as pd
+        
+        # Create files directory if it doesn't exist
+        images_dir = "files"
+        os.makedirs(images_dir, exist_ok=True)
+        
+        # Helper function to save plotly figures
+        def save_plotly_fig(fig, filename=None):
+            if filename is None:
+                filename = f"{uuid.uuid4()}.png"
+            # Ensure the filename has an extension
+            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
+                filename = f"{filename}.png"
+            image_path = os.path.join(images_dir, filename)
+            fig.write_image(image_path)
+            return image_path
+        
+        # Helper function to save matplotlib figures
+        def save_matplotlib_fig(filename=None):
+            if filename is None:
+                filename = f"{uuid.uuid4()}.png"
+            # Ensure the filename has an extension
+            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
+                filename = f"{filename}.png"
+            image_path = os.path.join(images_dir, filename)
+            plt.savefig(image_path)
+            plt.close()
+            return image_path
             
-            # Execute the code in a context with access to slide
-            local_vars = {"slide": slide, "prs": prs}
-            exec(code, {}, local_vars)
-            
-            # Save the modified presentation
-            prs.save(file_path)
-            
-            # Return the updated XML - inline the XML generation instead of calling get_slide_xml
-            slide = prs.slides[slide_index]
+        # Helper function to generate XML representation of a slide
+        def get_slide_xml_representation(slide):
             xml_representation = "<slide>\n"
             
             # Add shapes
@@ -141,95 +159,51 @@ async def modify_slide(file_path: str, slide_index: int, code: str) -> str:
             
             xml_representation += "</slide>"
             return xml_representation
-        else:
-            return f"Error: Slide index {slide_index} out of range."
-    except Exception as e:
-        return f"Error: {str(e)}\n\nCode attempted to execute:\n{code}"
-
-@activity.defn
-async def modify_excel(file_path: str, sheet_name: str, code: str) -> str:
-    """Modify an Excel sheet using Python code."""
-    import pandas as pd
-    
-    try:
-        # Read the sheet into a DataFrame
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
-        
-        # Execute the code with access to the DataFrame
-        local_vars = {"df": df}
-        exec(code, {}, local_vars)
-        
-        # Get the updated DataFrame
-        updated_df = local_vars.get("df", df)
-        
-        # Write the updated DataFrame back to the Excel file
-        with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-            updated_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        
-        # Return the updated table
-        return updated_df.to_markdown(index=False)
-    except Exception as e:
-        return f"Error: {str(e)}\n\nCode attempted to execute:\n{code}"
-
-@activity.defn
-async def execute_code(code: str) -> str:
-    """Execute Python code for data analysis and visualization. The LLM should include all necessary imports in the code it generates and handle opening any files it needs based on file names and sheet names known to the LLM. Allowed libraries include: pandas, numpy, matplotlib, plotly, os, datetime, uuid. Helper functions save_plotly_fig() and save_matplotlib_fig() are available to save visualizations."""
-    try:
-        import os
-        import uuid
-        
-        # Create files directory if it doesn't exist
-        images_dir = "files"
-        os.makedirs(images_dir, exist_ok=True)
-        
-        # Helper function to save plotly figures
-        def save_plotly_fig(fig, filename=None):
-            if filename is None:
-                filename = f"{uuid.uuid4()}.png"
-            # Ensure the filename has an extension
-            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
-                filename = f"{filename}.png"
-            image_path = os.path.join(images_dir, filename)
-            fig.write_image(image_path)
-            return image_path
-        
-        # Helper function to save matplotlib figures
-        def save_matplotlib_fig(filename=None):
-            if filename is None:
-                filename = f"{uuid.uuid4()}.png"
-            # Ensure the filename has an extension
-            if not any(filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.svg']):
-                filename = f"{filename}.png"
-            image_path = os.path.join(images_dir, filename)
-            plt.savefig(image_path)
-            plt.close()
-            return image_path
         
         # Create a local namespace with only helper functions and directory info
         local_vars = {
             'images_dir': images_dir,
             'save_plotly_fig': save_plotly_fig,
             'save_matplotlib_fig': save_matplotlib_fig,
+            'get_slide_xml_representation': get_slide_xml_representation,
+            'pd': pd,
         }
         
         # Execute the code
         result = exec(code, {}, local_vars)
         
+        # Check if a PowerPoint slide was modified
+        if 'slide' in local_vars and 'prs' in local_vars and 'pptx_file_path' in local_vars:
+            # Save the modified presentation
+            local_vars['prs'].save(local_vars['pptx_file_path'])
+            
+            # Return the XML representation of the modified slide if we have the slide_index
+            if 'slide_index' in local_vars:
+                slide = local_vars['prs'].slides[local_vars['slide_index']]
+                xml_representation = get_slide_xml_representation(slide)
+                return f"PowerPoint slide modified successfully.\n\n{xml_representation}"
+            return "PowerPoint presentation modified successfully."
+        
+        # Check if an Excel sheet was modified
+        if 'df' in local_vars and 'excel_file_path' in local_vars and 'sheet_name' in local_vars:
+            # Save the modified DataFrame back to the Excel file
+            with pd.ExcelWriter(local_vars['excel_file_path'], engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                local_vars['df'].to_excel(writer, sheet_name=local_vars['sheet_name'], index=False)
+            
+            # Return the updated table as markdown
+            return f"Excel sheet modified successfully.\n\n{local_vars['df'].to_markdown(index=False)}"
+        
         # Check if an image path was returned or stored in image_path variable
         if 'image_path' in local_vars:
             return f"Code executed successfully. Image saved to: {local_vars['image_path']}"
-        # Check if any Plotly figures were created but not saved
-        elif 'fig' in local_vars and hasattr(local_vars['fig'], 'write_image'):
-            image_path = save_plotly_fig(local_vars['fig'])
-            return f"Code executed successfully. Plotly figure automatically saved to: {image_path}"
-        # Check if any matplotlib figures were created but not saved
-        elif 'plt' in local_vars and hasattr(local_vars['plt'], 'get_fignums') and local_vars['plt'].get_fignums():
-            image_path = save_matplotlib_fig()
-            return f"Code executed successfully. Matplotlib figure automatically saved to: {image_path}"
-        else:
-            return "Code executed successfully."
+        
+        # Check if there's any output to return
+        if 'output' in local_vars:
+            return str(local_vars['output'])
+            
+        return "Code executed successfully."
     except Exception as e:
-        return f"Error executing code: {str(e)}\n\nCode attempted to execute:\n{code}"
+        return f"Error: {str(e)}\n\nCode attempted to execute:\n{code}"
 
 @activity.defn
 async def get_image(image_path: str) -> str:
@@ -303,64 +277,14 @@ def define_tools():
         {
             "type": "function",
             "function": {
-                "name": "modify_slide",
-                "description": "Modify a slide using Python code",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Path to the PowerPoint file"
-                        },
-                        "slide_index": {
-                            "type": "integer",
-                            "description": "Zero-based index of the slide to modify"
-                        },
-                        "code": {
-                            "type": "string",
-                            "description": "Python code to execute to modify the slide (has access to 'slide' object from python-pptx)"
-                        }
-                    },
-                    "required": ["file_path", "slide_index", "code"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "modify_excel",
-                "description": "Modify an Excel sheet using Python code",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Path to the Excel file"
-                        },
-                        "sheet_name": {
-                            "type": "string",
-                            "description": "Name of the sheet to modify"
-                        },
-                        "code": {
-                            "type": "string",
-                            "description": "Python code to execute to modify the sheet (has access to 'df' DataFrame from pandas)"
-                        }
-                    },
-                    "required": ["file_path", "sheet_name", "code"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "execute_code",
-                "description": "Execute Python code for data analysis and visualization. The LLM should include all necessary imports in the code it generates and handle opening any files it needs based on file names and sheet names known to the LLM. Allowed libraries include: pandas, numpy, matplotlib, plotly, os, datetime, uuid. Helper functions save_plotly_fig() and save_matplotlib_fig() are available to save visualizations.",
+                "description": "Execute Python code for data analysis, visualization, and file modification. The code can analyze Excel data, create visualizations, and modify PowerPoint slides and Excel sheets. Include all necessary imports in the code and handle opening any files based on known file names and sheet names. You can use libraries like pandas, numpy, matplotlib, plotly, pptx, os, datetime, and uuid.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": "Python code to execute. Should include all imports and file opening operations. Can use libraries like pandas for data manipulation and plotly/matplotlib for creating visualizations."
+                            "description": "Python code to execute. Should include all imports and file opening operations. For PowerPoint modification, set variables 'prs', 'slide', 'pptx_file_path', and 'slide_index'. For Excel modification, set variables 'df', 'excel_file_path', and 'sheet_name'. For visualization, helper functions save_plotly_fig() and save_matplotlib_fig() are available."
                         }
                     },
                     "required": ["code"]
@@ -469,10 +393,6 @@ async def execute_tool(tool_name: str, tool_args: Dict) -> str:
         return await get_slide_xml(tool_args["file_path"], tool_args["slide_index"])
     elif tool_name == "get_excel_data":
         return await get_excel_table(tool_args["file_path"], tool_args["sheet_name"])
-    elif tool_name == "modify_slide":
-        return await modify_slide(tool_args["file_path"], tool_args["slide_index"], tool_args["code"])
-    elif tool_name == "modify_excel":
-        return await modify_excel(tool_args["file_path"], tool_args["sheet_name"], tool_args["code"])
     elif tool_name == "execute_code":
         return await execute_code(tool_args["code"])
     elif tool_name == "get_image":
@@ -496,8 +416,6 @@ class PPTAgentWorkflow:
     @workflow.run
     async def run(self) -> List[Dict[str, Any]]:
         """Main workflow that orchestrates the agent."""
-        import json
-        
         # Initialize with system message
         self.messages = [
             {
@@ -541,14 +459,11 @@ File paths mapping:
 You have access to the following tools:
 1. get_slide - Get the XML representation of a slide
 2. get_excel_data - Get data from an Excel sheet as a markdown table
-3. modify_slide - Modify a slide using Python code
-4. modify_excel - Modify an Excel sheet using Python code
-5. execute_code - Execute Python code with pandas and plotly to analyze Excel data and create visualizations. The code has access to the following variables: df (DataFrame of the Excel file), pd (pandas), px (plotly express), go (plotly graph objects), plt (matplotlib.pyplot), np (numpy), file_path (the path to the Excel file), and helper functions save_plotly_fig() and save_matplotlib_fig() to save visualizations to the files directory.
-6. get_image - Get the base64 encoded string of an image file
+3. execute_code - Execute Python code for data analysis, visualization, and file modification. The code can analyze Excel data, create visualizations, and modify PowerPoint slides and Excel sheets. Include all necessary imports in your code and handle opening any files based on known file names. For PowerPoint modifications, use the python-pptx library and set variables 'prs', 'slide', 'pptx_file_path', and 'slide_index'. For Excel modifications, set variables 'df', 'excel_file_path', and 'sheet_name'. For visualization, use the helper functions save_plotly_fig() and save_matplotlib_fig() to save images.
+4. get_image - Get the base64 encoded string of an image file
 
-When modifying slides, you have access to a 'slide' object from the python-pptx library.
-When modifying Excel, you have access to a 'df' DataFrame object from pandas.
-When using execute_code, all the files reside in "files" directory and you must save the images to the same directory.
+When working with PowerPoint or Excel through execute_code, use the appropriate libraries to open and modify files.
+When using execute_code, all the files reside in "files" directory and you must save any images to the same directory.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
@@ -579,21 +494,24 @@ then make targeted modifications based on the user's request.
                 # Check if tools need to be called
                 if assistant_message["tool_calls"]:
                     for tool_call in assistant_message["tool_calls"]:
+                        # Process tool call
                         tool_name = tool_call["function"]["name"]
                         tool_args = json.loads(tool_call["function"]["arguments"])
                         
-                        # Execute tool
-                        tool_response = await workflow.execute_activity(
+                        # Execute the tool and get the result
+                        tool_result = await workflow.execute_activity(
                             execute_tool,
-                            args=[tool_name, tool_args],
-                            start_to_close_timeout=timedelta(minutes=1)
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            start_to_close_timeout=timedelta(seconds=30)
                         )
                         
                         # Update memory if modification tools were used
-                        if tool_name in ["modify_slide", "modify_excel"]:
+                        if tool_name == "execute_code":
                             self.memory = await workflow.execute_activity(
                                 create_memory_snapshot,
-                                args=[self.pptx_files, self.excel_files],
+                                pptx_files=self.pptx_files,
+                                excel_files=self.excel_files,
                                 start_to_close_timeout=timedelta(seconds=30)
                             )
                             
@@ -612,14 +530,11 @@ File paths mapping:
 You have access to the following tools:
 1. get_slide - Get the XML representation of a slide
 2. get_excel_data - Get data from an Excel sheet as a markdown table
-3. modify_slide - Modify a slide using Python code
-4. modify_excel - Modify an Excel sheet using Python code
-5. execute_code - Execute Python code with pandas and plotly to analyze Excel data and create visualizations. The code has access to the following variables: df (DataFrame of the Excel file), pd (pandas), px (plotly express), go (plotly graph objects), plt (matplotlib.pyplot), np (numpy), and helper functions save_plotly_fig() and save_matplotlib_fig() to save visualizations to the files directory.
-6. get_image - Get the base64 encoded string of an image file
+3. execute_code - Execute Python code for data analysis, visualization, and file modification. The code can analyze Excel data, create visualizations, and modify PowerPoint slides and Excel sheets. Include all necessary imports in your code and handle opening any files based on known file names. For PowerPoint modifications, use the python-pptx library and set variables 'prs', 'slide', 'pptx_file_path', and 'slide_index'. For Excel modifications, set variables 'df', 'excel_file_path', and 'sheet_name'. For visualization, use the helper functions save_plotly_fig() and save_matplotlib_fig() to save images.
+4. get_image - Get the base64 encoded string of an image file
 
-When modifying slides, you have access to a 'slide' object from the python-pptx library.
-When modifying Excel, you have access to a 'df' DataFrame object from pandas.
-When using execute_code, all the files reside in "files" directory and you must save the images to the same directory.
+When working with PowerPoint or Excel through execute_code, use the appropriate libraries to open and modify files.
+When using execute_code, all the files reside in "files" directory and you must save any images to the same directory.
 
 Always plan your approach before making changes. First examine the files to understand their structure,
 then make targeted modifications based on the user's request.
@@ -630,7 +545,7 @@ then make targeted modifications based on the user's request.
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
                             "name": tool_name,
-                            "content": str(tool_response)
+                            "content": str(tool_result)
                         })
                         
                         # Continue to next iteration to let LLM process tool responses
@@ -662,7 +577,7 @@ async def run_worker():
     # Initialize client
     client = await Client.connect("localhost:7233")
     
-    # Register workflow and activities with worker
+    # Initialize and register workflow_worker
     worker = Worker(
         client,
         task_queue="ppt-agent-task-queue",
@@ -672,8 +587,8 @@ async def run_worker():
             extract_excel_structure, 
             get_slide_xml, 
             get_excel_table, 
-            modify_slide, 
-            modify_excel,
+            execute_code,
+            get_image,
             create_memory_snapshot,
             create_file_path_mapping,
             call_llm,
