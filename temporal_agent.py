@@ -5,7 +5,6 @@ from temporalio.worker import Worker
 from datetime import timedelta
 from typing import List, Dict, Any, Optional
 import json
-from matplotlib import pyplot as plt
 
 # Helper Functions for File Processing
 @activity.defn
@@ -98,6 +97,7 @@ async def execute_code(code: str) -> str:
         import os
         import uuid
         import pandas as pd
+        from matplotlib import pyplot as plt
         
         # Create files directory if it doesn't exist
         images_dir = "files"
@@ -143,16 +143,16 @@ async def execute_code(code: str) -> str:
                         xml_representation += f"        <paragraph>{paragraph.text}</paragraph>\n"
                     xml_representation += "      </text_frame>\n"
                 
-                # Add table if present
-                if hasattr(shape, "table") and shape.table:
-                    xml_representation += "      <table>\n"
-                    for row in shape.table.rows:
-                        xml_representation += "        <row>\n"
-                        for cell in row.cells:
-                            cell_text = cell.text_frame.text if cell.text_frame else ""
-                            xml_representation += f"          <cell>{cell_text}</cell>\n"
-                        xml_representation += "        </row>\n"
-                    xml_representation += "      </table>\n"
+                # # Add table if present
+                # if hasattr(shape, "table") and shape.table:
+                #     xml_representation += "      <table>\n"
+                #     for row in shape.table.rows:
+                #         xml_representation += "        <row>\n"
+                #         for cell in row.cells:
+                #             cell_text = cell.text_frame.text if cell.text_frame else ""
+                #             xml_representation += f"          <cell>{cell_text}</cell>\n"
+                #         xml_representation += "        </row>\n"
+                #     xml_representation += "      </table>\n"
                 
                 xml_representation += "    </shape>\n"
             xml_representation += "  </shapes>\n"
@@ -501,8 +501,7 @@ then make targeted modifications based on the user's request.
                         # Execute the tool and get the result
                         tool_result = await workflow.execute_activity(
                             execute_tool,
-                            tool_name=tool_name,
-                            tool_args=tool_args,
+                            args=[tool_name, tool_args],
                             start_to_close_timeout=timedelta(seconds=30)
                         )
                         
@@ -510,8 +509,7 @@ then make targeted modifications based on the user's request.
                         if tool_name == "execute_code":
                             self.memory = await workflow.execute_activity(
                                 create_memory_snapshot,
-                                pptx_files=self.pptx_files,
-                                excel_files=self.excel_files,
+                                args=[self.pptx_files, self.excel_files],
                                 start_to_close_timeout=timedelta(seconds=30)
                             )
                             
